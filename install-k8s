@@ -12,36 +12,10 @@ fi
 
 scratch=$(mktemp -d)
 
-# Check and install jq
-if ! which jq &>/dev/null; then
-    if [[ "${os}" == "darwin" ]]; then
-        ( set +eu; brew install jq )
-    else
-        echo "Please install jq"
-        exit 1
-    fi
-fi
-
-# Check and install kubectl
-latest_kubectl=$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)
-install_kubectl=0
-if which kubectl&>/dev/null; then
-    installed_kubectl=$(kubectl version --client --short | awk '{print $3}')
-    if [[ "${installed_kubectl}" != "${latest_kubectl}" ]]; then
-        install_kubectl=1
-    fi
-else
-    install_kubectl=1
-fi
-
-if [[ ${install_kubectl} -eq 1 ]]; then
-    echo "Installing/upgrading kubectl, you will be prompted for your password"
-    set -x
-    curl -L "https://storage.googleapis.com/kubernetes-release/release/${latest_kubectl}/bin/${os}/${arch}/kubectl" -o ${scratch}/kubectl
-    sudo mv ${scratch}/kubectl /usr/local/bin/kubectl
-    sudo chmod +x /usr/local/bin/kubectl
-    set +x
-fi
+docker pull stedolan/jq
+docker pull bitnami/kubectl
+alias jq='docker run -i stedolan/jq'
+alias kubectl='docker run --rm --name kubectl --volume $(pwd)/kube_config_rke_cluster.yaml:/.kube/config bitnami/kubectl'
 
 # Check and install rke tool
 latest_rke=$(curl -s https://api.github.com/repos/rancher/rke/releases/latest | jq --raw-output .name)
@@ -67,9 +41,8 @@ rm -rf "${scratch}"
 rke up --config rke_cluster.yaml
 
 # Install the kubernetes dashboard and crteate a service account to use it
-export KUBECONFIG=./kube_config_cluster.yml
 kubectl apply -f dashboard.yaml
-kubectl apply -f service_account.yaml
+kubectl apply -f dashboard_service_account.yaml
 
 secret_name=$(kubectl -n kube-system get secret --output=json | jq --raw-output '.items[] | select(.metadata.annotations."kubernetes.io/service-account.name"=="dashboard-admin-user") | .metadata.name')
 echo
