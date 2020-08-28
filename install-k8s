@@ -1,0 +1,79 @@
+#!/bin/bash
+set -eEuo pipefail
+export SHELLOPTS
+
+os=$(uname -s | tr '[:upper:]' '[:lower:]')
+arch=$(uname -m)
+if [[ "${arch}" == "x86_64" ]]; then
+    arch="amd64"
+elif [[ "${arch}" == "aarch64" ]]; then
+    arch="arm64"
+fi
+
+scratch=$(mktemp -d)
+
+# Check and install jq
+if ! which jq &>/dev/null; then
+    if [[ "${os}" == "darwin" ]]; then
+        ( set +eu; brew install jq )
+    else
+        echo "Please install jq"
+        exit 1
+    fi
+fi
+
+# Check and install kubectl
+latest_kubectl=$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)
+install_kubectl=0
+if which kubectl&>/dev/null; then
+    installed_kubectl=$(kubectl version --client --short | awk '{print $3}')
+    if [[ "${installed_kubectl}" != "${latest_kubectl}" ]]; then
+        install_kubectl=1
+    fi
+else
+    install_kubectl=1
+fi
+
+if [[ ${install_kubectl} -eq 1 ]]; then
+    echo "Installing/upgrading kubectl, you will be prompted for your password"
+    set -x
+    curl -L "https://storage.googleapis.com/kubernetes-release/release/${latest_kubectl}/bin/${os}/${arch}/kubectl" -o ${scratch}/kubectl
+    sudo mv ${scratch}/kubectl /usr/local/bin/kubectl
+    sudo chmod +x /usr/local/bin/kubectl
+    set +x
+fi
+
+# Check and install rke tool
+latest_rke=$(curl -s https://api.github.com/repos/rancher/rke/releases/latest | jq --raw-output .name)
+install_rke=0
+if which rke &>/dev/null; then
+    installed_rke=$(rke --version | awk '{print $3}')
+    if [[ "${installed_rke}" != "${latest_rke}" ]]; then
+        install_rke=1
+    fi
+else
+    install_rke=1
+fi
+if [[ ${install_rke} -eq 1 ]]; then
+    echo "Installing/upgrading rke, you will be prompted for your password"
+    url=$(curl -s https://api.github.com/repos/rancher/rke/releases/latest | jq --raw-output '.assets[] | select(.name | contains("'${os}-${arch}'")) | .browser_download_url')
+    curl -L "${url}" -o ${scratch}/rke
+    sudo mv ${scratch}/rke /usr/local/bin/rke
+    sudo chmod +x /usr/local/bin/rke
+fi
+rm -rf "${scratch}"
+
+# Install RKE using the config file
+rke up --config rke_cluster.yaml
+
+# Install the kubernetes dashboard and crteate a service account to use it
+export KUBECONFIG=./kube_config_cluster.yml
+kubectl apply -f dashboard.yaml
+kubectl apply -f service_account.yaml
+
+secret_name=$(kubectl -n kube-system get secret --output=json | jq --raw-output '.items[] | select(.metadata.annotations."kubernetes.io/service-account.name"=="dashboard-admin-user") | .metadata.name')
+echo
+echo "Secret name: ${secret_name}"
+echo "Token:"
+kubectl -n kube-system get secret ${secret_name} --output=jsonpath='{.data.token}' | base64 -d
+echo; echo
