@@ -10,42 +10,26 @@ elif [[ "${arch}" == "aarch64" ]]; then
     arch="arm64"
 fi
 
-scratch=$(mktemp -d)
-
 docker pull stedolan/jq
 docker pull bitnami/kubectl
 alias jq='docker run -i stedolan/jq'
 alias kubectl='docker run --rm --name kubectl --volume $(pwd)/kube_config_rke_cluster.yaml:/.kube/config bitnami/kubectl'
 
-# Check and install rke tool
-latest_rke=$(curl -s https://api.github.com/repos/rancher/rke/releases/latest | jq --raw-output .name)
-install_rke=0
-if which rke &>/dev/null; then
-    installed_rke=$(rke --version | awk '{print $3}')
-    if [[ "${installed_rke}" != "${latest_rke}" ]]; then
-        install_rke=1
-    fi
-else
-    install_rke=1
-fi
-if [[ ${install_rke} -eq 1 ]]; then
-    echo "Installing/upgrading rke, you will be prompted for your password"
-    url=$(curl -s https://api.github.com/repos/rancher/rke/releases/latest | jq --raw-output '.assets[] | select(.name | contains("'${os}-${arch}'")) | .browser_download_url')
-    curl -L "${url}" -o ${scratch}/rke
-    sudo mv ${scratch}/rke /usr/local/bin/rke
-    sudo chmod +x /usr/local/bin/rke
-fi
-rm -rf "${scratch}"
+# Get latest rke tool
+url=$(curl -s https://api.github.com/repos/rancher/rke/releases/latest | jq --raw-output '.assets[] | select(.name | contains("'${os}-${arch}'")) | .browser_download_url')
+curl -L "${url}" -o ./rke
+chmod +x ./rke
 
 # Install RKE using the config file
-rke up --config rke_cluster.yaml
+./rke up --config rke_cluster.yaml
 
-# Install the kubernetes dashboard and crteate a service account to use it
+# Install the kubernetes dashboard and create a service account to use it
 kubectl apply -f dashboard.yaml
 kubectl apply -f dashboard_service_account.yaml
 
 secret_name=$(kubectl -n kube-system get secret --output=json | jq --raw-output '.items[] | select(.metadata.annotations."kubernetes.io/service-account.name"=="dashboard-admin-user") | .metadata.name')
 echo
+echo "Service account"
 echo "Secret name: ${secret_name}"
 echo "Token:"
 kubectl -n kube-system get secret ${secret_name} --output=jsonpath='{.data.token}' | base64 -d
