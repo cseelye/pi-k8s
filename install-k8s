@@ -10,27 +10,31 @@ elif [[ "${arch}" == "aarch64" ]]; then
     arch="arm64"
 fi
 
+echo "Get the latest jq and kubectl containers"
 docker pull stedolan/jq
 docker pull bitnami/kubectl
-alias jq='docker run -i stedolan/jq'
-alias kubectl='docker run --rm --name kubectl --volume $(pwd)/kube_config_rke_cluster.yaml:/.kube/config bitnami/kubectl'
+jq='docker run -i stedolan/jq'
+kubectl="docker run --rm --name kubectl --volume $(pwd)/kube_config_rke_cluster.yaml:/.kube/config --volume $(pwd):/work --workdir /work bitnami/kubectl"
 
 # Get latest rke tool
-url=$(curl -s https://api.github.com/repos/rancher/rke/releases/latest | jq --raw-output '.assets[] | select(.name | contains("'${os}-${arch}'")) | .browser_download_url')
+echo "Get the lastest rke tool"
+url=$(curl -s https://api.github.com/repos/rancher/rke/releases/latest | ${jq} --raw-output '.assets[] | select(.name | contains("'${os}-${arch}'")) | .browser_download_url')
 curl -L "${url}" -o ./rke
 chmod +x ./rke
+rke="./rke"
 
 # Install RKE using the config file
-./rke up --config rke_cluster.yaml
+${rke} up --config rke_cluster.yaml
 
 # Install the kubernetes dashboard and create a service account to use it
-kubectl apply -f dashboard.yaml
-kubectl apply -f dashboard_service_account.yaml
+echo "Install k8s dashboard"
+${kubectl} apply -f dashboard.yaml
+${kubectl} apply -f dashboard_service_account.yaml
 
-secret_name=$(kubectl -n kube-system get secret --output=json | jq --raw-output '.items[] | select(.metadata.annotations."kubernetes.io/service-account.name"=="dashboard-admin-user") | .metadata.name')
+secret_name=$(${kubectl} -n kube-system get secret --output=json | ${jq} --raw-output '.items[] | select(.metadata.annotations."kubernetes.io/service-account.name"=="dashboard-admin-user") | .metadata.name')
 echo
 echo "Service account"
 echo "Secret name: ${secret_name}"
 echo "Token:"
-kubectl -n kube-system get secret ${secret_name} --output=jsonpath='{.data.token}' | base64 -d
+${kubectl} -n kube-system get secret ${secret_name} --output=jsonpath='{.data.token}' | base64 -d
 echo; echo
