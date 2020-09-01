@@ -1,3 +1,4 @@
+rke
 *.rkestate
 kube_config_*.yml
 kube_config_*.yaml
